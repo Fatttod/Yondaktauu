@@ -1,8 +1,9 @@
 import streamlit as st
 import singbox_converter
 import os
-import mysql.connector # Import untuk koneksi MySQL
-from passlib.hash import pbkdf2_sha256 # Untuk hashing password
+import mysql.connector
+from passlib.hash import pbkdf2_sha256
+import tempfile # Digunakan untuk menyimpan sertifikat CA sementara
 
 # --- Konfigurasi Awal Aplikasi Streamlit ---
 st.set_page_config(
@@ -17,24 +18,43 @@ if 'logged_in' not in st.session_state:
 if 'username' not in st.session_state:
     st.session_state.username = None
 if 'page_selection' not in st.session_state:
-    st.session_state.page_selection = "🔐 Login & Pengaturan Akun" # Default selalu ke login jika belum login
+    # Arahkan selalu ke halaman Login/Pengaturan Akun jika belum login
+    st.session_state.page_selection = "🔐 Login & Pengaturan Akun"
 
 # --- Fungsi Koneksi Database MySQL Aiven ---
 def get_mysql_connection():
     """Mendapatkan koneksi ke database MySQL Aiven menggunakan st.secrets."""
+    conn = None
+    ca_cert_path = None
+
     try:
+        # Menulis SSL CA content ke file sementara jika disediakan di st.secrets
+        if "ssl_ca_content" in st.secrets["mysql"]:
+            temp_dir = tempfile.gettempdir() # Dapatkan direktori temp sistem (misal /tmp di Linux)
+            ca_cert_path = os.path.join(temp_dir, "aiven_ca.pem") # Nama file sementara
+
+            # Tulis konten sertifikat ke file sementara
+            with open(ca_cert_path, "w") as f:
+                f.write(st.secrets["mysql"]["ssl_ca_content"])
+            # st.info(f"CA certificate ditulis ke file sementara: {ca_cert_path}") # Debugging info, bisa dihapus
+
         conn = mysql.connector.connect(
             host=st.secrets["mysql"]["host"],
             port=st.secrets["mysql"]["port"],
             user=st.secrets["mysql"]["user"],
             password=st.secrets["mysql"]["password"],
             database=st.secrets["mysql"]["database"],
-            ssl_ca=st.secrets["mysql"].get("ssl_ca", None) # Ambil ssl_ca jika ada
+            ssl_ca=ca_cert_path # Gunakan path file sementara
         )
         return conn
     except Exception as e:
-        st.error(f"❌ Gagal koneksi ke database MySQL Aiven, tod! Pastikan kredensial di .streamlit/secrets.toml benar dan file CA certificate ada. Error: {e}")
+        # Menampilkan pesan error yang lebih informatif jika kredensial tidak ditemukan
+        if "mysql" not in st.secrets:
+            st.error("❌ Kredensial MySQL tidak ditemukan di Streamlit Secrets. Pastikan Anda telah mengaturnya di 'Advanced settings' aplikasi.")
+        else:
+            st.error(f"❌ Gagal koneksi ke database MySQL Aiven, tod! Pastikan kredensial di 'Advanced settings' Streamlit Cloud benar dan format SSL CA content tepat. Error: {e}")
         return None
+    # Tidak perlu finally di sini karena koneksi akan ditutup di fungsi pemanggil
 
 def init_db():
     """Menginisialisasi tabel users jika belum ada di MySQL."""
@@ -42,6 +62,7 @@ def init_db():
     if conn:
         try:
             c = conn.cursor()
+            # Gunakan VARCHAR(255) yang cukup besar untuk password hash
             c.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -50,11 +71,12 @@ def init_db():
                 )
             ''')
             conn.commit()
-            # st.success("Database users siap!") # Bisa dihapus nanti di produksi
+            # st.success("Database users siap!") # Debugging info, bisa dihapus
         except Exception as e:
             st.error(f"Error saat inisialisasi tabel database: {e}")
         finally:
-            conn.close()
+            if conn: # Pastikan conn tidak None sebelum ditutup
+                conn.close()
 
 def add_user(username, password):
     """Menambahkan user baru ke database MySQL."""
@@ -76,7 +98,8 @@ def add_user(username, password):
             st.error(f"Error tak terduga saat mendaftarkan user: {e}")
             return False
         finally:
-            conn.close()
+            if conn:
+                conn.close()
     return False
 
 def verify_user(username, password):
@@ -96,10 +119,12 @@ def verify_user(username, password):
             st.error(f"Error saat verifikasi user: {e}")
             return False
         finally:
-            conn.close()
+            if conn:
+                conn.close()
     return False
 
 # Panggil inisialisasi database saat aplikasi dimulai
+# Ini akan membuat tabel 'users' jika belum ada
 init_db()
 
 # --- Fungsi untuk membaca template dari file ---
@@ -199,23 +224,33 @@ def login_page():
 
     with signup_tab:
         st.subheader("Bikin Akun Baru")
-        username_signup = st.text_input("Username Baru", key="username_signup")
-        password_signup = st.text_input("Password Baru", type="password", key="password_signup")
-        confirm_password_signup = st.text_input("Konfirmasi Password", type="password", key="confirm_password_signup")
+        # Inisialisasi session_state untuk nilai input agar bisa di-reset
+        if 'signup_username_value' not in st.session_state:
+            st.session_state.signup_username_value = ""
+        if 'signup_password_value' not in st.session_state:
+            st.session_state.signup_password_value = ""
+        if 'signup_confirm_password_value' not in st.session_state:
+            st.session_state.signup_confirm_password_value = ""
+
+        # Gunakan nilai dari session_state untuk input widget
+        username_signup_input = st.text_input("Username Baru", key="username_signup_form_input", value=st.session_state.signup_username_value)
+        password_signup_input = st.text_input("Password Baru", type="password", key="password_signup_form_input", value=st.session_state.signup_password_value)
+        confirm_password_signup_input = st.text_input("Konfirmasi Password", type="password", key="confirm_password_signup_form_input", value=st.session_state.signup_confirm_password_value)
+        
         if st.button("Daftar", key="do_signup_button"):
-            if not username_signup or not password_signup or not confirm_password_signup:
+            if not username_signup_input or not password_signup_input or not confirm_password_signup_input:
                 st.error("Semua kolom harus diisi, tod!")
-            elif password_signup != confirm_password_signup:
+            elif password_signup_input != confirm_password_signup_input:
                 st.error("Konfirmasi Password nggak cocok, mek!")
             else:
-                if add_user(username_signup, password_signup):
-                    st.success(f"Akun '{username_signup}' berhasil didaftarkan! Silakan Login.")
-                    # Kosongkan input setelah daftar berhasil
-                    # Gunakan key unik untuk reset input
-                    st.session_state.username_signup = "" 
-                    st.session_state.password_signup = ""
-                    st.session_state.confirm_password_signup = ""
+                if add_user(username_signup_input, password_signup_input):
+                    st.success(f"Akun '{username_signup_input}' berhasil didaftarkan! Silakan Login.")
+                    # Reset nilai di session_state setelah berhasil daftar
+                    st.session_state.signup_username_value = "" 
+                    st.session_state.signup_password_value = ""
+                    st.session_state.signup_confirm_password_value = ""
                     st.rerun() # Muat ulang untuk mengosongkan input field
+                # else: Error sudah ditangani di fungsi add_user
 
 # --- Homepage Utama ---
 def homepage():
@@ -279,4 +314,4 @@ else:
         media_downloader_page()
     elif st.session_state.page_selection == "🔐 Login & Pengaturan Akun":
         login_page()
-
+                
