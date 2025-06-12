@@ -281,14 +281,16 @@ def update_config_to_github(token, repo_name, file_path, content):
 
 # --- Fungsi untuk halaman Sing-Box Converter ---
 def singbox_converter_page():
+
+     # --- DEBUGGING GITHUB SESSION STATE (TARUH DI SINI!) ---
+    st.info(f"DEBUG: Logged In: {st.session_state.logged_in}")
+    st.info(f"DEBUG: GitHub Token (first 10 chars): {st.session_state.github_token[:10] if st.session_state.github_token else 'EMPTY'}")
+    st.info(f"DEBUG: GitHub Repo: {st.session_state.github_repo_name if st.session_state.github_repo_name else 'EMPTY'}")
+    # --- END DEBUGGING ---
+    
     st.header("⚙️ Sing-Box Config Converter")
     st.write("Di sini lo bisa konversi link VPN dan atur config Sing-Box lo.")
 
-    # --- DEBUGGING GITHUB SESSION STATE ---
-    st.info(f"DEBUG: Logged In: {st.session_state.logged_in}")
-    st.info(f"DEBUG: GitHub Token (first 10 chars): {st.session_state.github_token[:10] if st.session_state.github_token else 'EMPTY'}")
-    "st.info(f"DEBUG: GitHub Repo: {st.session_state.github_repo_name if st.session_state.github_repo_name else 'EMPTY'}")
-    # --- END DEBUGGING ---
     vpn_links = st.text_area("Masukkan link VPN (VMess/VLESS/Trojan):", height=200)
     singbox_template = load_template_from_file()
 
