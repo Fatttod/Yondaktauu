@@ -285,17 +285,11 @@ def singbox_converter_page():
     st.write("Di sini lo bisa konversi link VPN dan atur config Sing-Box lo.")
 
     # --- DEBUGGING GITHUB SESSION STATE ---
-    st.info(f"DEBUG: Logged In: {st.session_state.logged_in}")
-    st.info(f"DEBUG: GitHub Token (first 10 chars): {st.session_state.github_token[:10] if st.session_state.github_token else 'EMPTY'}")
-    "st.info(f"DEBUG: GitHub Repo: {st.session_state.github_repo_name if st.session_state.github_repo_name else 'EMPTY'}")
+    #st.info(f"DEBUG: Logged In: {st.session_state.logged_in}")
+    #st.info(f"DEBUG: GitHub Token (first 10 chars): {st.session_state.github_token[:10] if st.session_state.github_token else 'EMPTY'}")
+    #"st.info(f"DEBUG: GitHub Repo: {st.session_state.github_repo_name if st.session_state.github_repo_name else 'EMPTY'}")
     # --- END DEBUGGING ---
-
-    vpn_links = st.text_area("Masukkan link VPN (VMess/VLESS/Trojan), satu link per baris:", height=200, key="vpn_links_input")
-    singbox_template = load_template_fromfile()
-    
-
-    
-    vpn_links = st.text_area("Masukkan link VPN (VMess/VLESS/Trojan), satu link per baris:", height=200)
+    vpn_links = st.text_area("Masukkan link VPN (VMess/VLESS/Trojan):", height=200)
     singbox_template = load_template_from_file()
 
     if singbox_template is None:
