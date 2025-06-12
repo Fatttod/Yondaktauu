@@ -1,21 +1,108 @@
 import streamlit as st
 import singbox_converter
 import os
+import mysql.connector # Import untuk koneksi MySQL
+from passlib.hash import pbkdf2_sha256 # Untuk hashing password
 
-# Konfigurasi halaman
+# --- Konfigurasi Awal Aplikasi Streamlit ---
 st.set_page_config(
     page_title="Swiss Army VPN Tools",
     page_icon="🛠️",
     layout="wide"
 )
 
-# Inisialisasi session state untuk status login
+# --- Inisialisasi Session State ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
+if 'username' not in st.session_state:
+    st.session_state.username = None
 if 'page_selection' not in st.session_state:
-    st.session_state.page_selection = "🏠 Homepage" # Default jika sudah login
+    st.session_state.page_selection = "🔐 Login & Pengaturan Akun" # Default selalu ke login jika belum login
 
-# Fungsi untuk membaca template dari file
+# --- Fungsi Koneksi Database MySQL Aiven ---
+def get_mysql_connection():
+    """Mendapatkan koneksi ke database MySQL Aiven menggunakan st.secrets."""
+    try:
+        conn = mysql.connector.connect(
+            host=st.secrets["mysql"]["host"],
+            port=st.secrets["mysql"]["port"],
+            user=st.secrets["mysql"]["user"],
+            password=st.secrets["mysql"]["password"],
+            database=st.secrets["mysql"]["database"],
+            ssl_ca=st.secrets["mysql"].get("ssl_ca", None) # Ambil ssl_ca jika ada
+        )
+        return conn
+    except Exception as e:
+        st.error(f"❌ Gagal koneksi ke database MySQL Aiven, tod! Pastikan kredensial di .streamlit/secrets.toml benar dan file CA certificate ada. Error: {e}")
+        return None
+
+def init_db():
+    """Menginisialisasi tabel users jika belum ada di MySQL."""
+    conn = get_mysql_connection()
+    if conn:
+        try:
+            c = conn.cursor()
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(255) UNIQUE NOT NULL,
+                    password_hash VARCHAR(255) NOT NULL
+                )
+            ''')
+            conn.commit()
+            # st.success("Database users siap!") # Bisa dihapus nanti di produksi
+        except Exception as e:
+            st.error(f"Error saat inisialisasi tabel database: {e}")
+        finally:
+            conn.close()
+
+def add_user(username, password):
+    """Menambahkan user baru ke database MySQL."""
+    conn = get_mysql_connection()
+    if conn:
+        try:
+            c = conn.cursor()
+            password_hash = pbkdf2_sha256.hash(password)
+            c.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s)", (username, password_hash))
+            conn.commit()
+            return True
+        except mysql.connector.Error as err:
+            if err.errno == mysql.connector.errorcode.ER_DUP_ENTRY:
+                st.error("Username sudah ada, tod! Coba username lain.")
+            else:
+                st.error(f"Error saat mendaftarkan user: {err}")
+            return False
+        except Exception as e:
+            st.error(f"Error tak terduga saat mendaftarkan user: {e}")
+            return False
+        finally:
+            conn.close()
+    return False
+
+def verify_user(username, password):
+    """Memverifikasi username dan password user dari database MySQL."""
+    conn = get_mysql_connection()
+    if conn:
+        try:
+            c = conn.cursor()
+            c.execute("SELECT password_hash FROM users WHERE username = %s", (username,))
+            result = c.fetchone()
+            
+            if result:
+                password_hash = result[0]
+                return pbkdf2_sha256.verify(password, password_hash)
+            return False
+        except Exception as e:
+            st.error(f"Error saat verifikasi user: {e}")
+            return False
+        finally:
+            conn.close()
+    return False
+
+# Panggil inisialisasi database saat aplikasi dimulai
+init_db()
+
+# --- Fungsi untuk membaca template dari file ---
 def load_template_from_file(file_path="singbox-template.txt"):
     if os.path.exists(file_path):
         with open(file_path, "r") as f:
@@ -34,6 +121,7 @@ def singbox_converter_page():
     if singbox_template is None:
         st.error(f"⚠️ File template 'singbox-template.txt' tidak ditemukan di direktori yang sama, tod! Pastikan file ada.")
 
+    # Tombol Konversi
     if st.button("🚀 Konversi Config"):
         if not vpn_links:
             st.error("⚠️ Link VPN nggak boleh kosong, tod!")
@@ -77,6 +165,22 @@ def login_page():
     st.header("🔐 Login & Pengaturan Akun")
     st.write("Di sini lo bisa login atau daftar akun.")
     
+    # Tampilkan jika sudah login
+    if st.session_state.logged_in:
+        st.success(f"Halo, {st.session_state.username}! Lo udah login.")
+        st.markdown("---")
+        st.subheader("Pengaturan Akun & GitHub")
+        st.write("Di sini lo bisa simpen info repo GitHub dan token lo.")
+        st.info("Fitur penyimpanan ini **Coming Soon**, akan terintegrasi dengan sistem login.")
+        if st.button("Logout", key="logout_button"):
+            st.session_state.logged_in = False
+            st.session_state.username = None
+            st.session_state.page_selection = "🔐 Login & Pengaturan Akun" # Redirect ke login page
+            st.success("Berhasil Logout.")
+            st.rerun() # Muat ulang halaman untuk mencerminkan status logout
+        return # Keluar dari fungsi agar tidak menampilkan form login/daftar lagi
+
+    # Tampilkan form login/daftar jika belum login
     login_tab, signup_tab = st.tabs(["Login", "Daftar"])
 
     with login_tab:
@@ -84,15 +188,14 @@ def login_page():
         username_login = st.text_input("Username", key="username_login")
         password_login = st.text_input("Password", type="password", key="password_login")
         if st.button("Login", key="do_login_button"):
-            # Placeholder untuk logika login
-            if username_login == "user" and password_login == "pass": # Contoh kredensial dummy
+            if verify_user(username_login, password_login):
                 st.session_state.logged_in = True
+                st.session_state.username = username_login
                 st.session_state.page_selection = "🏠 Homepage" # Redirect ke homepage setelah login
-                st.success("Login Berhasil! Selamat datang!")
+                st.success(f"Login Berhasil! Selamat datang, {username_login}!")
                 st.rerun()
             else:
                 st.error("Username atau Password salah, tod!")
-            st.info("Logika login sebenarnya akan membutuhkan database lokal.")
 
     with signup_tab:
         st.subheader("Bikin Akun Baru")
@@ -100,33 +203,26 @@ def login_page():
         password_signup = st.text_input("Password Baru", type="password", key="password_signup")
         confirm_password_signup = st.text_input("Konfirmasi Password", type="password", key="confirm_password_signup")
         if st.button("Daftar", key="do_signup_button"):
-            # Placeholder untuk logika daftar
-            if password_signup != confirm_password_signup:
+            if not username_signup or not password_signup or not confirm_password_signup:
+                st.error("Semua kolom harus diisi, tod!")
+            elif password_signup != confirm_password_signup:
                 st.error("Konfirmasi Password nggak cocok, mek!")
-            elif username_signup and password_signup:
-                st.success(f"Akun '{username_signup}' berhasil didaftarkan (placeholder).")
-                st.info("Logika pendaftaran sebenarnya akan menyimpan data di database lokal.")
-                # Setelah daftar, bisa langsung login atau dialihkan ke halaman login
             else:
-                st.error("Username dan Password nggak boleh kosong, tod!")
-
-    if st.session_state.logged_in:
-        st.markdown("---")
-        st.subheader("Pengaturan Akun & GitHub")
-        st.write("Di sini lo bisa simpen info repo GitHub dan token lo.")
-        st.info("Fitur penyimpanan ini **Coming Soon**, akan terintegrasi dengan sistem login.")
-        if st.button("Logout", key="logout_button"):
-            st.session_state.logged_in = False
-            st.session_state.page_selection = "🔐 Login & Pengaturan Akun" # Redirect ke login page
-            st.success("Berhasil Logout.")
-            st.rerun()
+                if add_user(username_signup, password_signup):
+                    st.success(f"Akun '{username_signup}' berhasil didaftarkan! Silakan Login.")
+                    # Kosongkan input setelah daftar berhasil
+                    # Gunakan key unik untuk reset input
+                    st.session_state.username_signup = "" 
+                    st.session_state.password_signup = ""
+                    st.session_state.confirm_password_signup = ""
+                    st.rerun() # Muat ulang untuk mengosongkan input field
 
 # --- Homepage Utama ---
 def homepage():
     st.title("🛠️ Swiss Army VPN Tools")
     st.markdown("---")
-    st.write("""
-    Halo **mek**! Selamat datang di **Swiss Army VPN Tools**! 
+    st.write(f"""
+    Halo **{st.session_state.username if st.session_state.username else 'mek'}**! Selamat datang di **Swiss Army VPN Tools**! 
     Ini adalah pusat kendali lo buat ngurusin segala hal tentang VPN dan media.
     Pilih fitur yang mau lo pakai di sidebar kiri ya.
     """)
@@ -146,7 +242,7 @@ def homepage():
     st.markdown("Buat download media dari berbagai platform sosial.")
     st.markdown("---")
 
-    if st.button("🔐 **Login & Pengaturan Akun**", use_container_width=True): # Tidak lagi "Coming Soon" labelnya
+    if st.button("🔐 **Login & Pengaturan Akun**", use_container_width=True):
         st.session_state.page_selection = "🔐 Login & Pengaturan Akun"
         st.rerun()
     st.markdown("Buat nyimpen settingan lo biar lebih nyaman.")
@@ -157,20 +253,22 @@ def homepage():
 
 # --- Kontrol Navigasi Utama ---
 if not st.session_state.logged_in:
-    # Jika belum login, paksa ke halaman login
+    # Jika belum login, paksa ke halaman login dan tampilkan
     st.session_state.page_selection = "🔐 Login & Pengaturan Akun"
     login_page()
 else:
     # Sidebar Navigasi jika sudah login
-    st.sidebar.title("Navigasi")
-    page_selection = st.sidebar.radio(
+    st.sidebar.title(f"Halo, {st.session_state.username}!")
+    st.sidebar.markdown("---")
+    page_selection_sidebar = st.sidebar.radio(
         "Pilih Halaman:",
         ("🏠 Homepage", "⚙️ Sing-Box Converter", "🎬 Media Downloader", "🔐 Login & Pengaturan Akun"),
         index=["🏠 Homepage", "⚙️ Sing-Box Converter", "🎬 Media Downloader", "🔐 Login & Pengaturan Akun"].index(st.session_state.page_selection)
     )
 
-    if page_selection != st.session_state.page_selection:
-        st.session_state.page_selection = page_selection
+    if page_selection_sidebar != st.session_state.page_selection:
+        st.session_state.page_selection = page_selection_sidebar
+        st.rerun() # Penting untuk rerender halaman jika pilihan sidebar berubah
 
     # Menampilkan halaman sesuai pilihan user
     if st.session_state.page_selection == "🏠 Homepage":
@@ -181,4 +279,4 @@ else:
         media_downloader_page()
     elif st.session_state.page_selection == "🔐 Login & Pengaturan Akun":
         login_page()
-    
+
