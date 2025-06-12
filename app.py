@@ -1,9 +1,10 @@
 import streamlit as st
-import singbox_converter
 import os
 import mysql.connector
 from passlib.hash import pbkdf2_sha256
-import tempfile # Digunakan untuk menyimpan sertifikat CA sementara
+import tempfile
+from github import Github # Import untuk integrasi GitHub
+import singbox_converter # Pastikan ini di-import jika singbox_converter.py ada
 
 # --- Konfigurasi Awal Aplikasi Streamlit ---
 st.set_page_config(
@@ -18,8 +19,15 @@ if 'logged_in' not in st.session_state:
 if 'username' not in st.session_state:
     st.session_state.username = None
 if 'page_selection' not in st.session_state:
-    # Arahkan selalu ke halaman Login/Pengaturan Akun jika belum login
-    st.session_state.page_selection = "🔐 Login & Pengaturan Akun"
+    st.session_state.page_selection = "🔐 Login & Pengaturan Akun" # Default ke login jika belum login
+
+# Inisialisasi session_state untuk pengaturan GitHub jika belum ada
+if 'github_token' not in st.session_state:
+    st.session_state.github_token = ""
+if 'github_repo_name' not in st.session_state:
+    st.session_state.github_repo_name = ""
+if 'github_file_path' not in st.session_state:
+    st.session_state.github_file_path = ""
 
 # --- Fungsi Koneksi Database MySQL Aiven ---
 def get_mysql_connection():
@@ -29,11 +37,10 @@ def get_mysql_connection():
 
     try:
         # Menulis SSL CA content ke file sementara jika disediakan di st.secrets
-        if "ssl_ca_content" in st.secrets["mysql"]:
+        if "ssl_ca_content" in st.secrets.get("mysql", {}): # Gunakan .get() untuk keamanan
             temp_dir = tempfile.gettempdir() # Dapatkan direktori temp sistem (misal /tmp di Linux)
             ca_cert_path = os.path.join(temp_dir, "aiven_ca.pem") # Nama file sementara
 
-            # Tulis konten sertifikat ke file sementara
             with open(ca_cert_path, "w") as f:
                 f.write(st.secrets["mysql"]["ssl_ca_content"])
             # st.info(f"CA certificate ditulis ke file sementara: {ca_cert_path}") # Debugging info, bisa dihapus
@@ -44,17 +51,15 @@ def get_mysql_connection():
             user=st.secrets["mysql"]["user"],
             password=st.secrets["mysql"]["password"],
             database=st.secrets["mysql"]["database"],
-            ssl_ca=ca_cert_path # Gunakan path file sementara
+            ssl_ca=ca_cert_path
         )
         return conn
     except Exception as e:
-        # Menampilkan pesan error yang lebih informatif jika kredensial tidak ditemukan
         if "mysql" not in st.secrets:
             st.error("❌ Kredensial MySQL tidak ditemukan di Streamlit Secrets. Pastikan Anda telah mengaturnya di 'Advanced settings' aplikasi.")
         else:
             st.error(f"❌ Gagal koneksi ke database MySQL Aiven, tod! Pastikan kredensial di 'Advanced settings' Streamlit Cloud benar dan format SSL CA content tepat. Error: {e}")
         return None
-    # Tidak perlu finally di sini karena koneksi akan ditutup di fungsi pemanggil
 
 def init_db():
     """Menginisialisasi tabel users jika belum ada di MySQL."""
@@ -62,7 +67,6 @@ def init_db():
     if conn:
         try:
             c = conn.cursor()
-            # Gunakan VARCHAR(255) yang cukup besar untuk password hash
             c.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -75,7 +79,7 @@ def init_db():
         except Exception as e:
             st.error(f"Error saat inisialisasi tabel database: {e}")
         finally:
-            if conn: # Pastikan conn tidak None sebelum ditutup
+            if conn:
                 conn.close()
 
 def add_user(username, password):
@@ -124,7 +128,6 @@ def verify_user(username, password):
     return False
 
 # Panggil inisialisasi database saat aplikasi dimulai
-# Ini akan membuat tabel 'users' jika belum ada
 init_db()
 
 # --- Fungsi untuk membaca template dari file ---
@@ -169,11 +172,23 @@ def singbox_converter_page():
                         key="download_button"
                     )
                     
-                    st.button(
-                        label="⬆️ Update ke GitHub (Coming Soon)",
-                        on_click=lambda: st.info("Fitur Update ke GitHub akan tersedia setelah fitur Login & Pengaturan Akun selesai, tod!"),
-                        key="github_update_button"
-                    )
+                    # --- Tombol Update ke GitHub ---
+                    # Cek apakah user sudah login dan sudah memasukkan token GitHub
+                    if st.session_state.logged_in and \
+                       st.session_state.github_token and \
+                       st.session_state.github_repo_name and \
+                       st.session_state.github_file_path:
+                        
+                        if st.button("⬆️ Update Config ke GitHub", key="github_update_button"):
+                            update_config_to_github(
+                                st.session_state.github_token,
+                                st.session_state.github_repo_name,
+                                st.session_state.github_file_path,
+                                converted_config
+                            )
+                    else:
+                        st.info("Login dulu dan isi pengaturan GitHub di halaman 'Login & Pengaturan Akun' untuk bisa update config ke GitHub, tod!")
+
                 else:
                     st.error(f"❌ Gagal konversi: {result['message']}")
             except Exception as e:
@@ -196,12 +211,38 @@ def login_page():
         st.markdown("---")
         st.subheader("Pengaturan Akun & GitHub")
         st.write("Di sini lo bisa simpen info repo GitHub dan token lo.")
-        st.info("Fitur penyimpanan ini **Coming Soon**, akan terintegrasi dengan sistem login.")
+        st.info("Untuk mengupdate config ke GitHub, lo perlu Personal Access Token (PAT) GitHub yang punya izin 'repo' (Full control of private repositories) dan nama repo tujuan.")
+        
+        # Ambil nilai dari session_state untuk di-isi ke input field
+        github_token_input = st.text_input("Personal Access Token GitHub", 
+                                            type="password", 
+                                            key="github_pat", 
+                                            value=st.session_state.github_token)
+        github_repo_name_input = st.text_input("Nama Repositori GitHub (contoh: user/nama-repo)", 
+                                                key="github_repo", 
+                                                value=st.session_state.github_repo_name)
+        github_file_path_input = st.text_input("Path File Config di Repo (contoh: config/singbox_config.json)", 
+                                                 key="github_file_path", 
+                                                 value=st.session_state.github_file_path)
+
+        if st.button("Simpan Pengaturan GitHub", key="save_github_settings_button"):
+            # Simpan nilai input ke session_state
+            st.session_state.github_token = github_token_input
+            st.session_state.github_repo_name = github_repo_name_input
+            st.session_state.github_file_path = github_file_path_input
+            st.success("Pengaturan GitHub berhasil disimpan.")
+
+        st.markdown("---")
+        # --- Tombol Logout ---
         if st.button("Logout", key="logout_button"):
             st.session_state.logged_in = False
             st.session_state.username = None
             st.session_state.page_selection = "🔐 Login & Pengaturan Akun" # Redirect ke login page
             st.success("Berhasil Logout.")
+            # Hapus juga info GitHub dari session_state saat logout
+            st.session_state.github_token = ""
+            st.session_state.github_repo_name = ""
+            st.session_state.github_file_path = ""
             st.rerun() # Muat ulang halaman untuk mencerminkan status logout
         return # Keluar dari fungsi agar tidak menampilkan form login/daftar lagi
 
@@ -240,7 +281,7 @@ def login_page():
         if st.button("Daftar", key="do_signup_button"):
             if not username_signup_input or not password_signup_input or not confirm_password_signup_input:
                 st.error("Semua kolom harus diisi, tod!")
-            elif password_signup_input != confirm_password_signup_input:
+            elif password_signup_input != confirm_password_input: # Perbaiki typo: confirm_password_signup_input
                 st.error("Konfirmasi Password nggak cocok, mek!")
             else:
                 if add_user(username_signup_input, password_signup_input):
@@ -251,6 +292,39 @@ def login_page():
                     st.session_state.signup_confirm_password_value = ""
                     st.rerun() # Muat ulang untuk mengosongkan input field
                 # else: Error sudah ditangani di fungsi add_user
+
+# --- Fungsi Baru: Update Config ke GitHub ---
+def update_config_to_github(token, repo_name, file_path, content):
+    try:
+        g = Github(token)
+        user = g.get_user() # Mengambil user yang punya token
+        
+        # Pastikan format repo_name sudah 'owner/repo_name'
+        if '/' not in repo_name:
+            st.error("❌ Format Nama Repositori GitHub salah. Harus 'user/nama-repo' atau 'organisasi/nama-repo'.")
+            return
+
+        repo = g.get_repo(repo_name) # Mendapatkan objek repo berdasarkan full name
+        
+        # Cek apakah file sudah ada atau belum
+        try:
+            # Dapatkan konten file yang sudah ada
+            contents = repo.get_contents(file_path, ref="main") # Asumsi branch 'main'
+            # Jika file ada, update isinya
+            repo.update_file(contents.path, "Update config dari Swiss Army VPN Tools", content, contents.sha, branch="main")
+            st.success(f"✅ Config berhasil diupdate di GitHub: {repo_name}/{file_path}")
+        except Exception as e:
+            # Jika file belum ada, buat file baru
+            if "Not Found" in str(e): # GitHub API returns 404 if file not found
+                repo.create_file(file_path, "Upload config dari Swiss Army VPN Tools", content, branch="main")
+                st.success(f"✅ Config berhasil diupload baru di GitHub: {repo_name}/{file_path}")
+            else:
+                st.error(f"❌ Error saat mengakses atau mengupdate file di GitHub: {e}")
+                st.info("Pastikan Nama Repositori GitHub dan Path File Config benar, serta token lo punya izin 'repo' (full control of private repositories).")
+
+    except Exception as e:
+        st.error(f"❌ Gagal koneksi atau otentikasi GitHub: {e}")
+        st.info("Cek lagi Personal Access Token GitHub lo, tod! Pastikan punya izin 'repo' (Full control of private repositories).")
 
 # --- Homepage Utama ---
 def homepage():
@@ -288,11 +362,9 @@ def homepage():
 
 # --- Kontrol Navigasi Utama ---
 if not st.session_state.logged_in:
-    # Jika belum login, paksa ke halaman login dan tampilkan
     st.session_state.page_selection = "🔐 Login & Pengaturan Akun"
     login_page()
 else:
-    # Sidebar Navigasi jika sudah login
     st.sidebar.title(f"Halo, {st.session_state.username}!")
     st.sidebar.markdown("---")
     page_selection_sidebar = st.sidebar.radio(
@@ -303,9 +375,8 @@ else:
 
     if page_selection_sidebar != st.session_state.page_selection:
         st.session_state.page_selection = page_selection_sidebar
-        st.rerun() # Penting untuk rerender halaman jika pilihan sidebar berubah
+        st.rerun()
 
-    # Menampilkan halaman sesuai pilihan user
     if st.session_state.page_selection == "🏠 Homepage":
         homepage()
     elif st.session_state.page_selection == "⚙️ Sing-Box Converter":
@@ -314,4 +385,4 @@ else:
         media_downloader_page()
     elif st.session_state.page_selection == "🔐 Login & Pengaturan Akun":
         login_page()
-                
+
