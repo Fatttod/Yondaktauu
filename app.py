@@ -18,8 +18,8 @@ def load_template_from_file(file_path="singbox-template.txt"):
         with open(file_path, "r") as f:
             return f.read()
     else:
-        st.error(f"File template '{file_path}' tidak ditemukan di direktori yang sama, tod! Pastikan file ada.")
-        return ""
+        # st.error(f"File template '{file_path}' tidak ditemukan di direktori yang sama, tod! Pastikan file ada.")
+        return None # Mengembalikan None jika file tidak ditemukan
 
 # --- Fungsi untuk halaman Sing-Box Converter ---
 def singbox_converter_page():
@@ -29,19 +29,20 @@ def singbox_converter_page():
     # Input area untuk link VPN
     vpn_links = st.text_area("Masukkan link VPN (VMess/VLESS/Trojan), satu link per baris:", height=200)
 
-    # Ambil template dari file dan tampilkan di text_area sebagai default
-    default_singbox_template = load_template_from_file()
-    singbox_template = st.text_area(
-        "Masukkan template config Sing-Box (JSON) atau edit yang sudah ada:", 
-        value=default_singbox_template, 
-        height=400, 
-        help="Pastikan ini adalah JSON yang valid. Template diambil otomatis dari singbox-template.txt."
-    )
+    # Ambil template dari file secara otomatis
+    singbox_template = load_template_from_file()
 
     converted_config = None
+    
+    # Tampilkan error jika template tidak ditemukan sebelum tombol konversi
+    if singbox_template is None:
+        st.error(f"⚠️ File template 'singbox-template.txt' tidak ditemukan di direktori yang sama, tod! Pastikan file ada.")
+
     if st.button("🚀 Konversi Config"):
-        if not vpn_links or not singbox_template:
-            st.error("⚠️ Link VPN atau template config nggak boleh kosong, tod!")
+        if not vpn_links:
+            st.error("⚠️ Link VPN nggak boleh kosong, tod!")
+        elif singbox_template is None:
+            st.error("⚠️ Template config tidak dapat dimuat karena file 'singbox-template.txt' tidak ditemukan.")
         else:
             try:
                 # Panggil fungsi konversi dari singbox_converter.py
