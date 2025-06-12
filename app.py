@@ -1,5 +1,6 @@
 import streamlit as st
 import singbox_converter # Ini modul yang udah kita bikin bareng
+import os
 
 # Konfigurasi halaman
 st.set_page_config(
@@ -7,6 +8,18 @@ st.set_page_config(
     page_icon="🛠️",
     layout="wide"
 )
+
+# Fungsi untuk membaca template dari file
+def load_template_from_file(file_path="singbox-template.txt"):
+    """
+    Membaca konten template Sing-Box dari file.
+    """
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            return f.read()
+    else:
+        st.error(f"File template '{file_path}' tidak ditemukan di direktori yang sama, tod! Pastikan file ada.")
+        return ""
 
 # --- Fungsi untuk halaman Sing-Box Converter ---
 def singbox_converter_page():
@@ -16,8 +29,14 @@ def singbox_converter_page():
     # Input area untuk link VPN
     vpn_links = st.text_area("Masukkan link VPN (VMess/VLESS/Trojan), satu link per baris:", height=200)
 
-    # Input area untuk template config Sing-Box
-    singbox_template = st.text_area("Masukkan template config Sing-Box (JSON):", height=400, help="Pastikan ini adalah JSON yang valid.")
+    # Ambil template dari file dan tampilkan di text_area sebagai default
+    default_singbox_template = load_template_from_file()
+    singbox_template = st.text_area(
+        "Masukkan template config Sing-Box (JSON) atau edit yang sudah ada:", 
+        value=default_singbox_template, 
+        height=400, 
+        help="Pastikan ini adalah JSON yang valid. Template diambil otomatis dari singbox-template.txt."
+    )
 
     converted_config = None
     if st.button("🚀 Konversi Config"):
@@ -71,27 +90,55 @@ def homepage():
     st.markdown("---")
     
     st.subheader("Fitur yang Tersedia:")
-    st.write("- **⚙️ Sing-Box Config Converter**: Buat ngatur dan ngerapihin konfigurasi Sing-Box lo secara otomatis.")
-    st.write("- **🎬 Media Downloader**: Buat download media dari berbagai platform sosial (soon).")
-    st.write("- **🔐 Login & Pengaturan Akun**: Buat nyimpen settingan lo biar lebih nyaman (soon).")
-    st.markdown("---")
+
+    # Card/Section untuk Sing-Box Converter
+    if st.button("⚙️ **Sing-Box Config Converter**", use_container_width=True):
+        st.session_state.page_selection = "⚙️ Sing-Box Converter"
+        st.rerun()
+    st.markdown("Buat ngatur dan ngerapihin konfigurasi Sing-Box lo secara otomatis.")
+    st.markdown("---") # Garis pemisah antar fitur
+
+    # Card/Section untuk Media Downloader
+    if st.button("🎬 **Media Downloader** (Coming Soon)", use_container_width=True):
+        st.session_state.page_selection = "🎬 Media Downloader"
+        st.rerun()
+    st.markdown("Buat download media dari berbagai platform sosial.")
+    st.markdown("---") # Garis pemisah antar fitur
+
+    # Card/Section untuk Login & Pengaturan Akun
+    if st.button("🔐 **Login & Pengaturan Akun** (Coming Soon)", use_container_width=True):
+        st.session_state.page_selection = "🔐 Login & Pengaturan Akun"
+        st.rerun()
+    st.markdown("Buat nyimpen settingan lo biar lebih nyaman.")
+    st.markdown("---") # Garis pemisah antar fitur
     
     st.subheader("Pesan dari Gua:")
     st.info("Ingat, **tod**! Fitur yang Coming Soon lagi dalam tahap pengembangan. Kopi sama rokoknya udah nyampe ya di markas gua, makasih banyak! 😎")
 
 # --- Sidebar Navigasi ---
 st.sidebar.title("Navigasi")
+
+# Gunakan session_state untuk mempertahankan pilihan halaman
+if 'page_selection' not in st.session_state:
+    st.session_state.page_selection = "🏠 Homepage"
+
 page_selection = st.sidebar.radio(
     "Pilih Halaman:",
-    ("🏠 Homepage", "⚙️ Sing-Box Converter", "🎬 Media Downloader", "🔐 Login & Pengaturan Akun")
+    ("🏠 Homepage", "⚙️ Sing-Box Converter", "🎬 Media Downloader", "🔐 Login & Pengaturan Akun"),
+    index=["🏠 Homepage", "⚙️ Sing-Box Converter", "🎬 Media Downloader", "🔐 Login & Pengaturan Akun"].index(st.session_state.page_selection)
 )
 
+# Update session_state jika pilihan sidebar berubah
+if page_selection != st.session_state.page_selection:
+    st.session_state.page_selection = page_selection
+
 # Menampilkan halaman sesuai pilihan user
-if page_selection == "🏠 Homepage":
+if st.session_state.page_selection == "🏠 Homepage":
     homepage()
-elif page_selection == "⚙️ Sing-Box Converter":
+elif st.session_state.page_selection == "⚙️ Sing-Box Converter":
     singbox_converter_page()
-elif page_selection == "🎬 Media Downloader":
+elif st.session_state.page_selection == "🎬 Media Downloader":
     media_downloader_page()
-elif page_selection == "🔐 Login & Pengaturan Akun":
+elif st.session_state.page_selection == "🔐 Login & Pengaturan Akun":
     login_page()
+    
